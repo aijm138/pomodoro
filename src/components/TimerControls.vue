@@ -3,12 +3,15 @@ defineProps<{
   isRunning: boolean
   isBreak: boolean
   canSkip: boolean
+  /** Hide Skip + Reset + Fullscreen text — compact / fullscreen layout */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
   toggle: []
   skip: []
   reset: []
+  fullscreen: []
 }>()
 </script>
 
@@ -56,8 +59,9 @@ const emit = defineEmits<{
         <span>{{ isRunning ? 'Pause' : 'Start' }}</span>
       </button>
 
-      <!-- Skip -->
+      <!-- Skip (hidden in compact mode) -->
       <button
+        v-if="!compact"
         type="button"
         class="touch-target flex h-14 items-center justify-center gap-2 rounded-2xl border px-5 text-base font-semibold transition-all active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 sm:h-16"
         :class="
@@ -90,13 +94,40 @@ const emit = defineEmits<{
       </button>
     </div>
 
-    <div class="mt-5 text-center">
+    <div
+      v-if="!compact"
+      class="mt-5 flex flex-col items-center gap-3"
+    >
       <button
         type="button"
         class="text-xs text-white/40 underline-offset-2 transition-colors hover:text-white/70 hover:underline focus:outline-none focus-visible:text-white/80 sm:text-sm"
         @click="emit('reset')"
       >
         Reset cycle
+      </button>
+
+      <button
+        type="button"
+        class="touch-target inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white/90 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-tomato-400"
+        aria-label="Enter fullscreen"
+        @click="emit('fullscreen')"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"
+          />
+        </svg>
+        Fullscreen
       </button>
     </div>
   </div>
