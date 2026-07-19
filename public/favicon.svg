@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#1a0a0a"/>
+  <!-- tomato body -->
+  <ellipse cx="256" cy="290" rx="160" ry="150" fill="#e03131"/>
+  <ellipse cx="210" cy="250" rx="50" ry="40" fill="#ff6b6b" opacity="0.35"/>
+  <!-- stem/leaves -->
+  <path d="M256 140 C256 140 240 200 256 220 C272 200 256 140 256 140Z" fill="#2f9e44"/>
+  <path d="M256 160 C220 130 180 150 190 180 C210 165 240 170 256 190Z" fill="#40c057"/>
+  <path d="M256 160 C292 130 332 150 322 180 C302 165 272 170 256 190Z" fill="#40c057"/>
+  <path d="M256 155 C250 120 270 100 290 110 C275 130 265 145 256 170Z" fill="#2f9e44"/>
+  <!-- highlight -->
+  <ellipse cx="200" cy="260" rx="28" ry="40" fill="#ffffff" opacity="0.18"/>
+</svg>

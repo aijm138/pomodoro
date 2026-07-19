@@ -24,6 +24,8 @@ export interface PersistedState {
   mode: TimerMode
   completedInCycle: number
   remainingSeconds: number
+  /** Planned work for each focus session in the cycle (index 0 = session 1) */
+  sessionNotes: string[]
 }
 
 /** Draft values while editing durations modal */

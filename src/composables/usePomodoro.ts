@@ -18,7 +18,11 @@ import {
 } from '@/utils/audio'
 import { formatTime } from '@/utils/formatTime'
 import { isValidHex, normalizeHexInput } from '@/utils/color'
-import { loadPersistedState, savePersistedState } from '@/utils/storage'
+import {
+  loadPersistedState,
+  normalizeSessionNotes,
+  savePersistedState,
+} from '@/utils/storage'
 
 /**
  * Core Pomodoro timer logic:
@@ -33,6 +37,10 @@ export function usePomodoro() {
   const completedInCycle = ref(0)
   const remainingSeconds = ref(DEFAULT_SETTINGS.workMinutes * 60)
   const isRunning = ref(false)
+  /** Planned focus text for each work session (length = sessionsBeforeLongBreak) */
+  const sessionNotes = ref<string[]>(
+    normalizeSessionNotes([], DEFAULT_SETTINGS.sessionsBeforeLongBreak),
+  )
 
   const menuOpen = ref(false)
   const showDurationsModal = ref(false)
@@ -77,6 +85,18 @@ export function usePomodoro() {
     return settings.value.allowSkipWork
   })
 
+  /**
+   * Which work-session note is "current" (0-based).
+   * -1 when on a break (no work session active).
+   */
+  const activeSessionIndex = computed(() => {
+    if (mode.value !== 'work') return -1
+    return Math.min(
+      completedInCycle.value,
+      Math.max(0, settings.value.sessionsBeforeLongBreak - 1),
+    )
+  })
+
   // ----- Duration helpers -----
 
   function durationForMode(m: TimerMode): number {
@@ -112,6 +132,7 @@ export function usePomodoro() {
       mode: mode.value,
       completedInCycle: completedInCycle.value,
       remainingSeconds: remainingSeconds.value,
+      sessionNotes: sessionNotes.value,
     })
   }
 
@@ -139,12 +160,37 @@ export function usePomodoro() {
     } else {
       remainingSeconds.value = durationForMode(mode.value)
     }
+
+    sessionNotes.value = normalizeSessionNotes(
+      data.sessionNotes ?? [],
+      settings.value.sessionsBeforeLongBreak,
+    )
+  }
+
+  /** Keep notes array length aligned with sessions-before-long-break */
+  function resizeSessionNotes(count: number): void {
+    sessionNotes.value = normalizeSessionNotes(sessionNotes.value, count)
+  }
+
+  function saveSessionNotes(notes: string[]): void {
+    sessionNotes.value = normalizeSessionNotes(
+      notes,
+      settings.value.sessionsBeforeLongBreak,
+    )
   }
 
   watch(
-    [settings, mode, completedInCycle, remainingSeconds],
+    [settings, mode, completedInCycle, remainingSeconds, sessionNotes],
     () => persist(),
     { deep: true },
+  )
+
+  // When the user changes how many work sessions are in a cycle, resize notes
+  watch(
+    () => settings.value.sessionsBeforeLongBreak,
+    (count) => {
+      resizeSessionNotes(count)
+    },
   )
 
   // Keep tick audio aligned with run state + toggle
@@ -336,6 +382,7 @@ export function usePomodoro() {
       completedInCycle.value = settings.value.sessionsBeforeLongBreak
     }
 
+    resizeSessionNotes(settings.value.sessionsBeforeLongBreak)
     remainingSeconds.value = durationForMode(mode.value)
     closeDurationsModal()
 
@@ -433,6 +480,8 @@ export function usePomodoro() {
     completedInCycle,
     remainingSeconds,
     isRunning,
+    sessionNotes,
+    activeSessionIndex,
     menuOpen,
     showDurationsModal,
     showBackgroundModal,
@@ -457,5 +506,6 @@ export function usePomodoro() {
     setBackground,
     onBackgroundLive,
     onBackgroundHex,
+    saveSessionNotes,
   }
 }

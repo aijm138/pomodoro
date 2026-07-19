@@ -49,6 +49,24 @@ function sanitizeSettings(raw: Partial<PomodoroSettings> | undefined): PomodoroS
   }
 }
 
+/**
+ * Normalize session notes to exactly `count` strings.
+ * Truncates extras; pads missing slots with empty strings.
+ */
+export function normalizeSessionNotes(
+  raw: unknown,
+  count: number,
+): string[] {
+  const size = Math.max(1, Math.min(12, Math.floor(count)))
+  const source = Array.isArray(raw) ? raw : []
+  const notes: string[] = []
+  for (let i = 0; i < size; i++) {
+    const value = source[i]
+    notes.push(typeof value === 'string' ? value : '')
+  }
+  return notes
+}
+
 /** Load and validate persisted state from localStorage */
 export function loadPersistedState(): Partial<PersistedState> | null {
   try {
@@ -76,6 +94,11 @@ export function loadPersistedState(): Partial<PersistedState> | null {
     if (typeof data.remainingSeconds === 'number' && data.remainingSeconds > 0) {
       result.remainingSeconds = Math.floor(data.remainingSeconds)
     }
+
+    result.sessionNotes = normalizeSessionNotes(
+      data.sessionNotes,
+      settings.sessionsBeforeLongBreak,
+    )
 
     return result
   } catch (err) {
