@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth page background transitions when user picks a color */
+body {
+  transition: background-color 0.35s ease;
+}
+
+/* Retro digital glow on the countdown */
+.timer-display {
+  text-shadow:
+    0 0 8px currentColor,
+    0 0 24px currentColor,
+    0 2px 0 rgba(0, 0, 0, 0.35);
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress dots fill animation */
+.progress-dot {
+  transition:
+    background-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.2s ease;
+}
+
+.progress-dot.filled {
+  box-shadow: 0 0 10px rgba(224, 49, 49, 0.7);
+  transform: scale(1.08);
+}
+
+/* Modal enter animation */
+.modal-backdrop {
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-panel {
+  animation: slideUp 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Larger touch targets on mobile */
+@media (max-width: 640px) {
+  .touch-target {
+    min-height: 52px;
+    min-width: 52px;
+  }
+}
+
+/* Color input styling */
+input[type='color'] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 0.5rem;
+}
