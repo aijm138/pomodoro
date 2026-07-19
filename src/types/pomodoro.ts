@@ -10,10 +10,14 @@ export interface PomodoroSettings {
   sessionsBeforeLongBreak: number
   /** When true, Skip is enabled during work sessions */
   allowSkipWork: boolean
-  /** Loop ticking sound while the timer is running */
+  /** Loop ticking sound while the timer is running (work sessions) */
   tickingSoundEnabled: boolean
-  /** Play alarm when a session reaches zero */
+  /** Also play ticking sound during short/long breaks */
+  tickingDuringBreaks: boolean
+  /** Play alarm when a work session reaches zero */
   goingOffSoundEnabled: boolean
+  /** Play lesson-complete sound when all work sessions in the cycle finish */
+  completionSoundEnabled: boolean
   /** Page background color as #rrggbb */
   backgroundColor: string
 }
@@ -26,6 +30,10 @@ export interface PersistedState {
   remainingSeconds: number
   /** Planned work for each focus session in the cycle (index 0 = session 1) */
   sessionNotes: string[]
+  /** Whether the timer was running when last saved */
+  isRunning: boolean
+  /** Absolute end time (ms since epoch) while running — survives minimize/background */
+  endTimestamp: number | null
 }
 
 /** Draft values while editing durations modal */

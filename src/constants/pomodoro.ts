@@ -11,13 +11,16 @@ export const DEFAULT_SETTINGS: PomodoroSettings = {
   sessionsBeforeLongBreak: 4,
   allowSkipWork: false,
   tickingSoundEnabled: true,
+  tickingDuringBreaks: false,
   goingOffSoundEnabled: true,
+  completionSoundEnabled: true,
   backgroundColor: DEFAULT_BG,
 }
 
 /** Served from /public via Vite */
-export const TICKING_SOUND_SRC = '/pomodoro_timer_ticking.mp3'
-export const GOING_OFF_SOUND_SRC = '/pomodoro_timer_going_off.mp3'
+export const TICKING_SOUND_SRC = '/pomodoro_clock_ticking.mp3'
+export const GOING_OFF_SOUND_SRC = '/pomodoro_clock_going_off.mp3'
+export const COMPLETION_SOUND_SRC = '/trw_lesson_complete_sound.mp3'
 
 /** Quick-pick background colors for the customize modal */
 export const BACKGROUND_PRESETS: readonly string[] = [

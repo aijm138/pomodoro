@@ -11,6 +11,7 @@ import {
 } from '@/constants/pomodoro'
 import {
   disposeAudio,
+  playCompletionSound,
   playGoingOffSound,
   startTickingSound,
   stopTickingSound,
@@ -26,10 +27,11 @@ import {
 
 /**
  * Core Pomodoro timer logic:
- * - Drift-resistant countdown via end-timestamp
+ * - Drift-resistant countdown via end-timestamp (works when minimized)
+ * - Web Worker ticks as a backup when the main thread is throttled
  * - Work → short break → … → long break cycle
- * - localStorage persistence
- * - Optional ticking + going-off MP3 sounds
+ * - localStorage persistence (including running end time)
+ * - Optional ticking / going-off / completion MP3 sounds
  */
 export function usePomodoro() {
   const settings = ref<PomodoroSettings>({ ...DEFAULT_SETTINGS })
@@ -53,9 +55,14 @@ export function usePomodoro() {
     sessionsBeforeLongBreak: DEFAULT_SETTINGS.sessionsBeforeLongBreak,
   })
 
-  /** Absolute end time (ms) while running — avoids setInterval drift */
+  /** Absolute end time (ms) while running — survives tab throttle / minimize */
   let endTimestamp: number | null = null
+  /** Main-thread fallback interval (also used if Worker unavailable) */
   let tickIntervalId: number | null = null
+  /** Dedicated worker for more reliable background ticks */
+  let timerWorker: Worker | null = null
+  /** Prevent double-handling complete from worker + interval racing */
+  let completing = false
 
   // ----- Computed -----
 
@@ -108,19 +115,44 @@ export function usePomodoro() {
 
   // ----- Sound sync (ticking loops only while running + enabled) -----
 
+  function shouldPlayTicking(): boolean {
+    if (!isRunning.value || !settings.value.tickingSoundEnabled) return false
+    if (mode.value === 'work') return true
+    return settings.value.tickingDuringBreaks
+  }
+
   function syncTickingSound(): void {
-    if (isRunning.value && settings.value.tickingSoundEnabled) {
+    if (shouldPlayTicking()) {
       startTickingSound()
     } else {
       stopTickingSound()
     }
   }
 
-  function playAlarmIfEnabled(): void {
+  /**
+   * Sounds when a countdown hits zero:
+   * - Work session: going-off alarm (`pomodoro_clock_going_off.mp3`)
+   * - Final work session of the cycle: completion jingle
+   *   (`trw_lesson_complete_sound.mp3`) — always after going-off so it isn’t cut off
+   * - Breaks: silent (user starts the next phase manually)
+   */
+  function playSessionEndSounds(completedMode: TimerMode): void {
+    stopTickingSound()
+
+    if (completedMode !== 'work') return
+
+    const isCycleComplete =
+      completedInCycle.value + 1 >= settings.value.sessionsBeforeLongBreak
+
     if (settings.value.goingOffSoundEnabled) {
       playGoingOffSound()
-    } else {
-      stopTickingSound()
+    }
+
+    if (isCycleComplete && settings.value.completionSoundEnabled) {
+      // Slight delay so the going-off clip can start first without muting this one
+      window.setTimeout(() => {
+        playCompletionSound()
+      }, settings.value.goingOffSoundEnabled ? 400 : 0)
     }
   }
 
@@ -133,6 +165,8 @@ export function usePomodoro() {
       completedInCycle: completedInCycle.value,
       remainingSeconds: remainingSeconds.value,
       sessionNotes: sessionNotes.value,
+      isRunning: isRunning.value,
+      endTimestamp: isRunning.value ? endTimestamp : null,
     })
   }
 
@@ -152,6 +186,37 @@ export function usePomodoro() {
       mode.value = data.mode
     }
 
+    sessionNotes.value = normalizeSessionNotes(
+      data.sessionNotes ?? [],
+      settings.value.sessionsBeforeLongBreak,
+    )
+
+    // Resume a timer that was running when the page was closed/minimized
+    const savedEnd =
+      typeof data.endTimestamp === 'number' ? data.endTimestamp : null
+    const wasRunning = Boolean(data.isRunning) && savedEnd !== null
+
+    if (wasRunning && savedEnd !== null) {
+      const msLeft = savedEnd - Date.now()
+      if (msLeft <= 0) {
+        // Session finished while away — land on the next phase, paused
+        remainingSeconds.value = 0
+        endTimestamp = null
+        isRunning.value = false
+        // Apply completion side-effects once (sounds + advance)
+        const finishedMode = mode.value
+        playSessionEndSounds(finishedMode)
+        advanceAfterSession()
+      } else {
+        remainingSeconds.value = Math.max(1, Math.ceil(msLeft / 1000))
+        endTimestamp = savedEnd
+        isRunning.value = true
+        // start engine without rewriting endTimestamp
+        startEngine(false)
+      }
+      return
+    }
+
     if (typeof data.remainingSeconds === 'number' && data.remainingSeconds > 0) {
       remainingSeconds.value = Math.min(
         data.remainingSeconds,
@@ -160,11 +225,6 @@ export function usePomodoro() {
     } else {
       remainingSeconds.value = durationForMode(mode.value)
     }
-
-    sessionNotes.value = normalizeSessionNotes(
-      data.sessionNotes ?? [],
-      settings.value.sessionsBeforeLongBreak,
-    )
   }
 
   /** Keep notes array length aligned with sessions-before-long-break */
@@ -193,23 +253,60 @@ export function usePomodoro() {
     },
   )
 
-  // Keep tick audio aligned with run state + toggle
+  // Keep tick audio aligned with run state + mode + toggles
   watch(
-    [isRunning, () => settings.value.tickingSoundEnabled],
+    [
+      isRunning,
+      mode,
+      () => settings.value.tickingSoundEnabled,
+      () => settings.value.tickingDuringBreaks,
+    ],
     () => syncTickingSound(),
   )
 
   // ----- Timer engine -----
+
+  function ensureWorker(): Worker | null {
+    if (timerWorker) return timerWorker
+    if (typeof Worker === 'undefined') return null
+    try {
+      timerWorker = new Worker(
+        new URL('../workers/timerWorker.ts', import.meta.url),
+        { type: 'module' },
+      )
+      timerWorker.onmessage = () => {
+        if (isRunning.value) syncFromEndTimestamp()
+      }
+      timerWorker.onerror = () => {
+        // Fall back to main-thread interval only
+        try {
+          timerWorker?.terminate()
+        } catch {
+          /* optional */
+        }
+        timerWorker = null
+      }
+      return timerWorker
+    } catch {
+      timerWorker = null
+      return null
+    }
+  }
 
   function clearTick(): void {
     if (tickIntervalId !== null) {
       clearInterval(tickIntervalId)
       tickIntervalId = null
     }
+    try {
+      timerWorker?.postMessage({ type: 'stop' })
+    } catch {
+      /* optional */
+    }
   }
 
   function syncFromEndTimestamp(): void {
-    if (endTimestamp === null) return
+    if (endTimestamp === null || completing) return
     const msLeft = endTimestamp - Date.now()
     const secs = Math.max(0, Math.ceil(msLeft / 1000))
     remainingSeconds.value = secs
@@ -218,12 +315,23 @@ export function usePomodoro() {
     }
   }
 
-  function startTicking(): void {
+  /**
+   * @param resetEnd When true, compute a fresh end from remainingSeconds.
+   *                 When false, keep the existing endTimestamp (resume path).
+   */
+  function startEngine(resetEnd = true): void {
     clearTick()
-    endTimestamp = Date.now() + remainingSeconds.value * 1000
+    if (resetEnd || endTimestamp === null) {
+      endTimestamp = Date.now() + remainingSeconds.value * 1000
+    }
+    // Main-thread interval (UI + fallback)
     tickIntervalId = window.setInterval(syncFromEndTimestamp, 250)
+    // Worker ticks for better background reliability
+    const worker = ensureWorker()
+    worker?.postMessage({ type: 'start' })
     syncFromEndTimestamp()
     syncTickingSound()
+    persist()
   }
 
   function stopTicking(): void {
@@ -240,6 +348,7 @@ export function usePomodoro() {
     if (isRunning.value) {
       stopTicking()
       isRunning.value = false
+      persist()
       return
     }
 
@@ -250,9 +359,9 @@ export function usePomodoro() {
       remainingSeconds.value = durationForMode(mode.value)
     }
     isRunning.value = true
-    startTicking()
+    startEngine(true)
     // Explicit call keeps tick start on the same click call stack
-    if (settings.value.tickingSoundEnabled) {
+    if (shouldPlayTicking()) {
       startTickingSound()
     }
   }
@@ -283,13 +392,19 @@ export function usePomodoro() {
   }
 
   function onTimerComplete(): void {
-    stopTicking()
-    isRunning.value = false
-    playAlarmIfEnabled()
-    advanceAfterSession()
-    // Auto-start next segment for seamless flow
-    isRunning.value = true
-    startTicking()
+    if (completing) return
+    completing = true
+    try {
+      const finishedMode = mode.value
+      stopTicking()
+      isRunning.value = false
+      playSessionEndSounds(finishedMode)
+      // Move to the next phase but wait for the user to press Start
+      advanceAfterSession()
+      persist()
+    } finally {
+      completing = false
+    }
   }
 
   function skipSession(): void {
@@ -326,11 +441,27 @@ export function usePomodoro() {
     }
   }
 
+  function toggleTickingDuringBreaks(): void {
+    unlockAudio()
+    settings.value = {
+      ...settings.value,
+      tickingDuringBreaks: !settings.value.tickingDuringBreaks,
+    }
+  }
+
   function toggleGoingOffSound(): void {
     unlockAudio()
     settings.value = {
       ...settings.value,
       goingOffSoundEnabled: !settings.value.goingOffSoundEnabled,
+    }
+  }
+
+  function toggleCompletionSound(): void {
+    unlockAudio()
+    settings.value = {
+      ...settings.value,
+      completionSoundEnabled: !settings.value.completionSoundEnabled,
     }
   }
 
@@ -388,7 +519,7 @@ export function usePomodoro() {
 
     if (wasRunning) {
       isRunning.value = true
-      startTicking()
+      startEngine(true)
     }
   }
 
@@ -445,31 +576,53 @@ export function usePomodoro() {
   }
 
   function onVisibilityChange(): void {
-    if (!document.hidden && isRunning.value && endTimestamp !== null) {
+    // Always re-sync from wall-clock end time when returning (or while hidden)
+    if (isRunning.value && endTimestamp !== null) {
+      syncFromEndTimestamp()
+      persist()
+    }
+    // Keep trying to play tick audio when allowed; browsers may mute in bg
+    syncTickingSound()
+  }
+
+  function onPageShow(): void {
+    if (isRunning.value && endTimestamp !== null) {
       syncFromEndTimestamp()
     }
-    // Pause tick audio in background tabs to be polite; resume on return
-    if (document.hidden) {
-      stopTickingSound()
-    } else {
-      syncTickingSound()
+  }
+
+  function onWindowFocus(): void {
+    if (isRunning.value && endTimestamp !== null) {
+      syncFromEndTimestamp()
     }
   }
 
   onMounted(() => {
     hydrateFromStorage()
-    if (remainingSeconds.value <= 0) {
+    if (!isRunning.value && remainingSeconds.value <= 0) {
       remainingSeconds.value = durationForMode(mode.value)
     }
     document.addEventListener('keydown', onKeydown)
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pageshow', onPageShow)
+    window.addEventListener('focus', onWindowFocus)
   })
 
   onUnmounted(() => {
-    stopTicking()
+    // Snapshot running state before tearing down so a refresh can resume
+    if (isRunning.value) persist()
+    clearTick()
+    try {
+      timerWorker?.terminate()
+    } catch {
+      /* optional */
+    }
+    timerWorker = null
     disposeAudio()
     document.removeEventListener('keydown', onKeydown)
     document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.removeEventListener('pageshow', onPageShow)
+    window.removeEventListener('focus', onWindowFocus)
   })
 
   return {
@@ -497,7 +650,9 @@ export function usePomodoro() {
     resetCycle,
     toggleAllowSkipWork,
     toggleTickingSound,
+    toggleTickingDuringBreaks,
     toggleGoingOffSound,
+    toggleCompletionSound,
     openDurationsModal,
     closeDurationsModal,
     saveDurations,

@@ -18,8 +18,9 @@ export default defineConfig({
         'favicon.png',
         'favicon.svg',
         'icons/*.png',
-        'pomodoro_timer_ticking.mp3',
-        'pomodoro_timer_going_off.mp3',
+        'pomodoro_clock_ticking.mp3',
+        'pomodoro_clock_going_off.mp3',
+        'trw_lesson_complete_sound.mp3',
       ],
       manifest: {
         name: 'Pomodoro Timer',

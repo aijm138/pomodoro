@@ -8,6 +8,7 @@
  */
 
 import {
+  COMPLETION_SOUND_SRC,
   GOING_OFF_SOUND_SRC,
   TICKING_SOUND_SRC,
 } from '@/constants/pomodoro'
@@ -20,6 +21,7 @@ let tickingLoadPromise: Promise<AudioBuffer | null> | null = null
 let tickingDesired = false
 
 let goingOffAudio: HTMLAudioElement | null = null
+let completionAudio: HTMLAudioElement | null = null
 
 type AudioContextConstructor = typeof AudioContext
 
@@ -143,6 +145,36 @@ function getGoingOffAudio(): HTMLAudioElement {
   return goingOffAudio
 }
 
+function getCompletionAudio(): HTMLAudioElement {
+  if (!completionAudio) {
+    completionAudio = new Audio(COMPLETION_SOUND_SRC)
+    completionAudio.preload = 'auto'
+    completionAudio.loop = false
+    completionAudio.volume = 0.9
+  }
+  return completionAudio
+}
+
+function playOneShot(audio: HTMLAudioElement, label: string): void {
+  try {
+    audio.muted = false
+    audio.pause()
+    try {
+      audio.currentTime = 0
+    } catch {
+      /* ignore */
+    }
+    const playPromise = audio.play()
+    if (playPromise !== undefined) {
+      void playPromise.catch((err: unknown) => {
+        console.warn(`${label} failed to play:`, err)
+      })
+    }
+  } catch (err) {
+    console.warn(`${label} error:`, err)
+  }
+}
+
 function stopTickingSource(): void {
   if (!tickingSource) return
   try {
@@ -209,6 +241,7 @@ export function unlockAudio(): void {
     // Kick off decode early so Start can play immediately next time
     void loadTickingBuffer()
     getGoingOffAudio()
+    getCompletionAudio()
   } catch {
     /* optional */
   }
@@ -247,25 +280,14 @@ export function stopTickingSound(): void {
 
 /** One-shot session-end alarm */
 export function playGoingOffSound(): void {
-  try {
-    stopTickingSound()
-    const audio = getGoingOffAudio()
-    audio.muted = false
-    audio.pause()
-    try {
-      audio.currentTime = 0
-    } catch {
-      /* ignore */
-    }
-    const playPromise = audio.play()
-    if (playPromise !== undefined) {
-      void playPromise.catch((err: unknown) => {
-        console.warn('Going-off sound failed to play:', err)
-      })
-    }
-  } catch (err) {
-    console.warn('Going-off sound error:', err)
-  }
+  stopTickingSound()
+  playOneShot(getGoingOffAudio(), 'Going-off sound')
+}
+
+/** One-shot work-session completion jingle */
+export function playCompletionSound(): void {
+  stopTickingSound()
+  playOneShot(getCompletionAudio(), 'Completion sound')
 }
 
 /** Tear down elements (e.g. on unmount) */
@@ -275,6 +297,10 @@ export function disposeAudio(): void {
     if (goingOffAudio) {
       goingOffAudio.pause()
       goingOffAudio = null
+    }
+    if (completionAudio) {
+      completionAudio.pause()
+      completionAudio = null
     }
     tickingBuffer = null
     tickingLoadPromise = null

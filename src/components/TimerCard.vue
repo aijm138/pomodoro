@@ -14,10 +14,10 @@ const props = defineProps<{
   canSkip: boolean
   completedInCycle: number
   sessionsBeforeLongBreak: number
-  /** Minimal layout: timer + Start/Pause only */
+  /** Minimal layout: timer + note + Start/Pause */
   compact?: boolean
-  /** Browser fullscreen active — show exit (X) control */
-  isFullscreen?: boolean
+  /** In-app focus mode — show exit (X) control */
+  isFocusMode?: boolean
   /** Note text for the current / relevant work session */
   sessionNote?: string
 }>()
@@ -26,8 +26,8 @@ const emit = defineEmits<{
   toggle: []
   skip: []
   reset: []
-  fullscreen: []
-  'exit-fullscreen': []
+  'enter-focus': []
+  'exit-focus': []
 }>()
 
 const trimmedNote = computed(() => (props.sessionNote ?? '').trim())
@@ -43,14 +43,14 @@ const showSessionNote = computed(() => trimmedNote.value.length > 0)
     role="region"
     aria-label="Pomodoro timer"
   >
-    <!-- Fullscreen exit (X) — top right of card -->
+    <!-- Focus mode exit (X) — top right of card -->
     <button
-      v-if="isFullscreen"
+      v-if="isFocusMode"
       type="button"
       class="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-white/90 transition-colors hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-tomato-400 sm:right-4 sm:top-4"
-      aria-label="Exit fullscreen"
-      title="Exit fullscreen"
-      @click="emit('exit-fullscreen')"
+      aria-label="Exit focus mode"
+      title="Exit focus mode"
+      @click="emit('exit-focus')"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -70,17 +70,16 @@ const showSessionNote = computed(() => trimmedNote.value.length > 0)
     </button>
 
     <!--
-      Compact (not fullscreen): enter-fullscreen control.
-      Mobile only — hidden on desktop (md+); desktop uses the Fullscreen
-      button under Start/Skip in the normal layout.
+      Enter focus mode — mobile only (hidden on desktop md+).
+      In-app UI mode; does not use the browser Fullscreen API.
     -->
     <button
-      v-else-if="compact"
+      v-else
       type="button"
       class="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-white/90 transition-colors hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-tomato-400 md:hidden"
-      aria-label="Enter fullscreen"
-      title="Fullscreen"
-      @click="emit('fullscreen')"
+      aria-label="Enter focus mode"
+      title="Focus mode"
+      @click="emit('enter-focus')"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -100,7 +99,7 @@ const showSessionNote = computed(() => trimmedNote.value.length > 0)
     </button>
 
     <!-- Progress dots (full layout only) -->
-    <div v-if="!compact" class="mb-6 flex items-start justify-center">
+    <div v-if="!compact" class="mb-6 flex items-start justify-center pr-10 md:pr-0">
       <ProgressDots
         :total="sessionsBeforeLongBreak"
         :completed="completedInCycle"
@@ -174,7 +173,6 @@ const showSessionNote = computed(() => trimmedNote.value.length > 0)
         @toggle="emit('toggle')"
         @skip="emit('skip')"
         @reset="emit('reset')"
-        @fullscreen="emit('fullscreen')"
       />
     </div>
   </div>

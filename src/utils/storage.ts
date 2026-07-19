@@ -39,10 +39,18 @@ function sanitizeSettings(raw: Partial<PomodoroSettings> | undefined): PomodoroS
       typeof s.tickingSoundEnabled === 'boolean'
         ? s.tickingSoundEnabled
         : DEFAULT_SETTINGS.tickingSoundEnabled,
+    tickingDuringBreaks:
+      typeof s.tickingDuringBreaks === 'boolean'
+        ? s.tickingDuringBreaks
+        : DEFAULT_SETTINGS.tickingDuringBreaks,
     goingOffSoundEnabled:
       typeof s.goingOffSoundEnabled === 'boolean'
         ? s.goingOffSoundEnabled
         : DEFAULT_SETTINGS.goingOffSoundEnabled,
+    completionSoundEnabled:
+      typeof s.completionSoundEnabled === 'boolean'
+        ? s.completionSoundEnabled
+        : DEFAULT_SETTINGS.completionSoundEnabled,
     backgroundColor: isValidHex(s.backgroundColor)
       ? s.backgroundColor.toLowerCase()
       : DEFAULT_BG,
@@ -99,6 +107,20 @@ export function loadPersistedState(): Partial<PersistedState> | null {
       data.sessionNotes,
       settings.sessionsBeforeLongBreak,
     )
+
+    if (typeof data.isRunning === 'boolean') {
+      result.isRunning = data.isRunning
+    }
+
+    if (
+      typeof data.endTimestamp === 'number' &&
+      Number.isFinite(data.endTimestamp) &&
+      data.endTimestamp > 0
+    ) {
+      result.endTimestamp = data.endTimestamp
+    } else if (data.endTimestamp === null) {
+      result.endTimestamp = null
+    }
 
     return result
   } catch (err) {

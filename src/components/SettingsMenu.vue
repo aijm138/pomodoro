@@ -5,14 +5,18 @@ const props = defineProps<{
   open: boolean
   allowSkipWork: boolean
   tickingSoundEnabled: boolean
+  tickingDuringBreaks: boolean
   goingOffSoundEnabled: boolean
+  completionSoundEnabled: boolean
 }>()
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
   'toggle-skip': []
   'toggle-ticking': []
+  'toggle-ticking-breaks': []
   'toggle-going-off': []
+  'toggle-completion': []
   'open-durations': []
   'open-background': []
 }>()
@@ -56,8 +60,16 @@ function onToggleTicking(): void {
   emit('toggle-ticking')
 }
 
+function onToggleTickingBreaks(): void {
+  emit('toggle-ticking-breaks')
+}
+
 function onToggleGoingOff(): void {
   emit('toggle-going-off')
+}
+
+function onToggleCompletion(): void {
+  emit('toggle-completion')
 }
 
 function onOpenDurations(): void {
@@ -206,6 +218,39 @@ onUnmounted(() => {
           </span>
         </button>
 
+        <!-- Ticking during breaks -->
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          :aria-checked="tickingDuringBreaks"
+          :aria-disabled="!tickingSoundEnabled"
+          class="flex w-full cursor-pointer select-none items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-white/5"
+          :class="!tickingSoundEnabled ? 'opacity-50' : ''"
+          @click="onToggleTickingBreaks"
+        >
+          <span class="text-sm leading-snug text-white/90">
+            Play ticking during breaks
+          </span>
+          <span
+            class="relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors"
+            :class="
+              tickingDuringBreaks && tickingSoundEnabled
+                ? 'bg-tomato-500'
+                : 'bg-white/20'
+            "
+            aria-hidden="true"
+          >
+            <span
+              class="mt-1 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform"
+              :class="
+                tickingDuringBreaks && tickingSoundEnabled
+                  ? 'translate-x-6'
+                  : 'translate-x-1'
+              "
+            />
+          </span>
+        </button>
+
         <!-- Going-off sound -->
         <button
           type="button"
@@ -223,6 +268,31 @@ onUnmounted(() => {
             <span
               class="mt-1 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform"
               :class="goingOffSoundEnabled ? 'translate-x-6' : 'translate-x-1'"
+            />
+          </span>
+        </button>
+
+        <!-- Work completion sound -->
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          :aria-checked="completionSoundEnabled"
+          class="flex w-full cursor-pointer select-none items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-white/5"
+          @click="onToggleCompletion"
+        >
+          <span class="text-sm leading-snug text-white/90">
+            Completion sound
+          </span>
+          <span
+            class="relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors"
+            :class="completionSoundEnabled ? 'bg-tomato-500' : 'bg-white/20'"
+            aria-hidden="true"
+          >
+            <span
+              class="mt-1 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform"
+              :class="
+                completionSoundEnabled ? 'translate-x-6' : 'translate-x-1'
+              "
             />
           </span>
         </button>

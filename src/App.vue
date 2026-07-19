@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import TimerCard from '@/components/TimerCard.vue'
 import SessionNotes from '@/components/SessionNotes.vue'
@@ -7,7 +7,6 @@ import DurationsModal from '@/components/DurationsModal.vue'
 import BackgroundModal from '@/components/BackgroundModal.vue'
 import { usePomodoro } from '@/composables/usePomodoro'
 import { useCompactViewport } from '@/composables/useCompactViewport'
-import { useFullscreen } from '@/composables/useFullscreen'
 import type { DurationDraft } from '@/types/pomodoro'
 
 const {
@@ -34,7 +33,9 @@ const {
   resetCycle,
   toggleAllowSkipWork,
   toggleTickingSound,
+  toggleTickingDuringBreaks,
   toggleGoingOffSound,
+  toggleCompletionSound,
   openDurationsModal,
   closeDurationsModal,
   saveDurations,
@@ -47,18 +48,22 @@ const {
 } = usePomodoro()
 
 const { isCompact } = useCompactViewport()
-const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen()
 
 /**
- * Minimal chrome when the viewport is tiny OR the user entered fullscreen.
- * Fullscreen uses the same focused layout as the <414×414 compact mode.
+ * In-app focus mode (not the browser Fullscreen API).
+ * Shows only the timer card: mode, time, session note, Start/Pause, exit X.
+ */
+const isFocusMode = ref(false)
+
+/**
+ * Minimal chrome when the viewport is tiny OR the user entered focus mode.
  */
 const useMinimalLayout = computed(
-  () => isCompact.value || isFullscreen.value,
+  () => isCompact.value || isFocusMode.value,
 )
 
 /**
- * Note under the timer in compact / fullscreen layouts:
+ * Note under the timer:
  * - Work: current session's plan
  * - Break: upcoming work session's plan (what you'll do next)
  */
@@ -72,7 +77,6 @@ const currentSessionNote = computed(() => {
     return ''
   }
 
-  // On a break — show the next work session note when available
   const nextIdx = completedInCycle.value
   if (nextIdx >= 0 && nextIdx < notes.length) {
     return notes[nextIdx] ?? ''
@@ -89,33 +93,61 @@ function resetBackgroundAndClose(): void {
   closeBackgroundModal()
 }
 
-async function onEnterFullscreen(): Promise<void> {
+function enterFocusMode(): void {
   menuOpen.value = false
-  await enterFullscreen()
+  showDurationsModal.value = false
+  showBackgroundModal.value = false
+  isFocusMode.value = true
 }
 
-async function onExitFullscreen(): Promise<void> {
-  await exitFullscreen()
+function exitFocusMode(): void {
+  isFocusMode.value = false
 }
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && isFocusMode.value) {
+    e.preventDefault()
+    exitFocusMode()
+  }
+}
+
+// Body scroll lock while in focus mode
+watch(isFocusMode, (on) => {
+  document.body.style.overflow = on ? 'hidden' : ''
+})
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
 </script>
 
 <template>
   <div
     class="flex min-h-screen flex-col"
+    :class="isFocusMode ? 'fixed inset-0 z-[60] overflow-hidden' : ''"
     :style="{ backgroundColor: settings.backgroundColor }"
   >
-    <!-- Full chrome only when there's room and not fullscreen -->
+    <!-- Full chrome only when there's room and not in focus mode -->
     <AppHeader
       v-if="!useMinimalLayout"
       :menu-open="menuOpen"
       :allow-skip-work="settings.allowSkipWork"
       :ticking-sound-enabled="settings.tickingSoundEnabled"
+      :ticking-during-breaks="settings.tickingDuringBreaks"
       :going-off-sound-enabled="settings.goingOffSoundEnabled"
+      :completion-sound-enabled="settings.completionSoundEnabled"
       :background-color="settings.backgroundColor"
       @update:menu-open="menuOpen = $event"
       @toggle-skip="toggleAllowSkipWork"
       @toggle-ticking="toggleTickingSound"
+      @toggle-ticking-breaks="toggleTickingDuringBreaks"
       @toggle-going-off="toggleGoingOffSound"
+      @toggle-completion="toggleCompletionSound"
       @open-durations="openDurationsModal"
       @open-background="openBackgroundModal"
     />
@@ -143,13 +175,13 @@ async function onExitFullscreen(): Promise<void> {
           :completed-in-cycle="completedInCycle"
           :sessions-before-long-break="settings.sessionsBeforeLongBreak"
           :compact="useMinimalLayout"
-          :is-fullscreen="isFullscreen"
+          :is-focus-mode="isFocusMode"
           :session-note="currentSessionNote"
           @toggle="toggleRunning"
           @skip="skipSession"
           @reset="resetCycle"
-          @fullscreen="onEnterFullscreen"
-          @exit-fullscreen="onExitFullscreen"
+          @enter-focus="enterFocusMode"
+          @exit-focus="exitFocusMode"
         />
 
         <template v-if="!useMinimalLayout">

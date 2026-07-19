@@ -5,7 +5,9 @@ defineProps<{
   menuOpen: boolean
   allowSkipWork: boolean
   tickingSoundEnabled: boolean
+  tickingDuringBreaks: boolean
   goingOffSoundEnabled: boolean
+  completionSoundEnabled: boolean
   backgroundColor: string
 }>()
 
@@ -13,7 +15,9 @@ const emit = defineEmits<{
   'update:menuOpen': [value: boolean]
   'toggle-skip': []
   'toggle-ticking': []
+  'toggle-ticking-breaks': []
   'toggle-going-off': []
+  'toggle-completion': []
   'open-durations': []
   'open-background': []
 }>()
@@ -45,11 +49,15 @@ const emit = defineEmits<{
         :open="menuOpen"
         :allow-skip-work="allowSkipWork"
         :ticking-sound-enabled="tickingSoundEnabled"
+        :ticking-during-breaks="tickingDuringBreaks"
         :going-off-sound-enabled="goingOffSoundEnabled"
+        :completion-sound-enabled="completionSoundEnabled"
         @update:open="emit('update:menuOpen', $event)"
         @toggle-skip="emit('toggle-skip')"
         @toggle-ticking="emit('toggle-ticking')"
+        @toggle-ticking-breaks="emit('toggle-ticking-breaks')"
         @toggle-going-off="emit('toggle-going-off')"
+        @toggle-completion="emit('toggle-completion')"
         @open-durations="emit('open-durations')"
         @open-background="emit('open-background')"
       />
