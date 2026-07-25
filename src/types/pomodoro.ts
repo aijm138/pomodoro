@@ -4,7 +4,9 @@ export type TimerMode = 'work' | 'shortBreak' | 'longBreak'
 /** User-configurable settings (persisted) */
 export interface PomodoroSettings {
   workMinutes: number
+  /** 0 = no short break (skip straight to next work) */
   shortBreakMinutes: number
+  /** 0 = no long break (reset cycle straight to work) */
   longBreakMinutes: number
   /** Number of work sessions before a long break (also = progress dots) */
   sessionsBeforeLongBreak: number
@@ -22,6 +24,20 @@ export interface PomodoroSettings {
   backgroundColor: string
 }
 
+/**
+ * Named configuration snapshot: durations + session count + session notes.
+ * Sound/background prefs stay global (not per-profile).
+ */
+export interface PomodoroProfile {
+  id: string
+  name: string
+  workMinutes: number
+  shortBreakMinutes: number
+  longBreakMinutes: number
+  sessionsBeforeLongBreak: number
+  sessionNotes: string[]
+}
+
 /** Shape stored in localStorage */
 export interface PersistedState {
   settings: PomodoroSettings
@@ -34,6 +50,10 @@ export interface PersistedState {
   isRunning: boolean
   /** Absolute end time (ms since epoch) while running — survives minimize/background */
   endTimestamp: number | null
+  /** Saved named configurations */
+  profiles: PomodoroProfile[]
+  /** Currently selected profile id, or null if none */
+  activeProfileId: string | null
 }
 
 /** Draft values while editing durations modal */
@@ -42,4 +62,25 @@ export interface DurationDraft {
   shortBreakMinutes: number
   longBreakMinutes: number
   sessionsBeforeLongBreak: number
+}
+
+/**
+ * Projected end of one work session in the current cycle,
+ * assuming every work + break runs back-to-back with no extra gaps.
+ */
+export interface WorkSessionProjection {
+  /** 0-based work session index in the cycle */
+  index: number
+  /** Absolute wall-clock end time, or null when already completed */
+  endsAt: Date | null
+  /** True when this work session has already finished */
+  isDone: boolean
+  /** True when this is the work session currently counting down */
+  isCurrent: boolean
+  /**
+   * Ready-to-render label:
+   * - "done" for completed sessions
+   * - "ends 3:42 PM" (locale default) for upcoming / current
+   */
+  display: string
 }

@@ -1,13 +1,21 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type {
   DurationDraft,
+  PomodoroProfile,
   PomodoroSettings,
   TimerMode,
+  WorkSessionProjection,
 } from '@/types/pomodoro'
 import {
   BACKGROUND_PRESETS,
+  createDefaultProfile,
   DEFAULT_BG,
   DEFAULT_SETTINGS,
+  LONG_BREAK_RANGE,
+  MAX_SESSIONS,
+  SESSIONS_RANGE,
+  SHORT_BREAK_RANGE,
+  WORK_MINUTES_RANGE,
 } from '@/constants/pomodoro'
 import {
   disposeAudio,
@@ -17,11 +25,13 @@ import {
   stopTickingSound,
   unlockAudio,
 } from '@/utils/audio'
-import { formatTime } from '@/utils/formatTime'
+import { formatClockTime, formatTime } from '@/utils/formatTime'
 import { isValidHex, normalizeHexInput } from '@/utils/color'
 import {
+  createProfileId,
   loadPersistedState,
   normalizeSessionNotes,
+  sanitizeProfiles,
   savePersistedState,
 } from '@/utils/storage'
 
@@ -29,8 +39,9 @@ import {
  * Core Pomodoro timer logic:
  * - Drift-resistant countdown via end-timestamp (works when minimized)
  * - Web Worker ticks as a backup when the main thread is throttled
- * - Work → short break → … → long break cycle
+ * - Work → short break → … → long break cycle (breaks of 0 min are skipped)
  * - localStorage persistence (including running end time)
+ * - Named profiles for durations + session notes
  * - Optional ticking / going-off / completion MP3 sounds
  */
 export function usePomodoro() {
@@ -44,16 +55,23 @@ export function usePomodoro() {
     normalizeSessionNotes([], DEFAULT_SETTINGS.sessionsBeforeLongBreak),
   )
 
+  const profiles = ref<PomodoroProfile[]>([createDefaultProfile()])
+  const activeProfileId = ref<string | null>(profiles.value[0]?.id ?? null)
+
   const menuOpen = ref(false)
   const showDurationsModal = ref(false)
   const showBackgroundModal = ref(false)
+  const showProfilesModal = ref(false)
   const durationsError = ref('')
+  const profilesError = ref('')
   const draft = ref<DurationDraft>({
     workMinutes: DEFAULT_SETTINGS.workMinutes,
     shortBreakMinutes: DEFAULT_SETTINGS.shortBreakMinutes,
     longBreakMinutes: DEFAULT_SETTINGS.longBreakMinutes,
     sessionsBeforeLongBreak: DEFAULT_SETTINGS.sessionsBeforeLongBreak,
   })
+  /** Draft name when creating a new profile */
+  const newProfileName = ref('')
 
   /** Absolute end time (ms) while running — survives tab throttle / minimize */
   let endTimestamp: number | null = null
@@ -63,6 +81,28 @@ export function usePomodoro() {
   let timerWorker: Worker | null = null
   /** Prevent double-handling complete from worker + interval racing */
   let completing = false
+
+  /**
+   * Wall-clock tick so sessionBreakdown stays accurate while paused
+   * (e.g. user waits several minutes before pressing Start again).
+   * While running, remainingSeconds already updates ~4×/s so this is optional.
+   */
+  const nowMs = ref(Date.now())
+  let nowTickId: number | null = null
+
+  function startNowTick(): void {
+    if (nowTickId !== null) return
+    nowTickId = window.setInterval(() => {
+      nowMs.value = Date.now()
+    }, 15_000)
+  }
+
+  function stopNowTick(): void {
+    if (nowTickId !== null) {
+      clearInterval(nowTickId)
+      nowTickId = null
+    }
+  }
 
   // ----- Computed -----
 
@@ -92,6 +132,12 @@ export function usePomodoro() {
     return settings.value.allowSkipWork
   })
 
+  const activeProfile = computed(() => {
+    const id = activeProfileId.value
+    if (!id) return null
+    return profiles.value.find((p) => p.id === id) ?? null
+  })
+
   /**
    * Which work-session note is "current" (0-based).
    * -1 when on a break (no work session active).
@@ -102,6 +148,110 @@ export function usePomodoro() {
       completedInCycle.value,
       Math.max(0, settings.value.sessionsBeforeLongBreak - 1),
     )
+  })
+
+  /**
+   * Projected wall-clock end for every work session in the current cycle,
+   * assuming the user runs every work + break back-to-back with no extra gaps.
+   *
+   * - Past sessions → "done"
+   * - Current / future → "ends 3:42 PM" (locale default)
+   *
+   * Always derived from the live remainingSeconds so it stays accurate while
+   * paused, after a late Start click, after Skip, or after duration edits.
+   * Zero-minute breaks contribute no time between work sessions.
+   */
+  const sessionBreakdown = computed((): WorkSessionProjection[] => {
+    const N = settings.value.sessionsBeforeLongBreak
+    const k = Math.min(Math.max(0, completedInCycle.value), N)
+    const workSec = settings.value.workMinutes * 60
+    const shortSec = settings.value.shortBreakMinutes * 60
+    // Long break is not needed for work-end projections (work ends before it).
+
+    // Depend on nowMs so this computed re-evaluates while paused (15s tick).
+    // Always use a fresh Date.now() for the actual anchor so running ticks
+    // (which update remainingSeconds) stay accurate even if nowMs is slightly stale.
+    void nowMs.value
+    const anchorMs = Date.now() + Math.max(0, remainingSeconds.value) * 1000
+
+    const results: WorkSessionProjection[] = []
+
+    // Past work sessions are already finished.
+    for (let i = 0; i < k; i++) {
+      results.push({
+        index: i,
+        endsAt: null,
+        isDone: true,
+        isCurrent: false,
+        display: 'done',
+      })
+    }
+
+    // Entire cycle of work is finished (on / after long break).
+    if (k >= N) {
+      return results
+    }
+
+    // Remaining work indices: k … N-1
+    // Build absolute end times for each remaining work session.
+    const endMsByIndex = new Map<number, number>()
+
+    if (mode.value === 'work') {
+      // Current work k ends at anchor; then short break + full work for the rest.
+      endMsByIndex.set(k, anchorMs)
+      let t = anchorMs
+      for (let i = k + 1; i < N; i++) {
+        t += shortSec * 1000 // break after previous work (0 if disabled)
+        t += workSec * 1000 // full next work
+        endMsByIndex.set(i, t)
+      }
+    } else if (mode.value === 'shortBreak') {
+      // Short break ends at anchor, then full work k, then (short + work)…
+      let t = anchorMs
+      for (let i = k; i < N; i++) {
+        t += workSec * 1000
+        endMsByIndex.set(i, t)
+        if (i < N - 1) {
+          t += shortSec * 1000
+        }
+      }
+    } else {
+      // longBreak: cycle work is already done (handled by k >= N above).
+      // Defensive: if somehow k < N on long break, treat remaining as full chain
+      // starting after this long break (shouldn't normally happen).
+      let t = anchorMs
+      for (let i = k; i < N; i++) {
+        t += workSec * 1000
+        endMsByIndex.set(i, t)
+        if (i < N - 1) {
+          t += shortSec * 1000
+        }
+      }
+    }
+
+    for (let i = k; i < N; i++) {
+      const endMs = endMsByIndex.get(i)
+      if (endMs === undefined) {
+        results.push({
+          index: i,
+          endsAt: null,
+          isDone: false,
+          isCurrent: mode.value === 'work' && i === k,
+          display: '—',
+        })
+        continue
+      }
+      const endsAt = new Date(endMs)
+      results.push({
+        index: i,
+        endsAt,
+        isDone: false,
+        isCurrent: mode.value === 'work' && i === k,
+        display: `ends ${formatClockTime(endsAt)}`,
+      })
+    }
+
+    return results
   })
 
   // ----- Duration helpers -----
@@ -167,12 +317,19 @@ export function usePomodoro() {
       sessionNotes: sessionNotes.value,
       isRunning: isRunning.value,
       endTimestamp: isRunning.value ? endTimestamp : null,
+      profiles: profiles.value,
+      activeProfileId: activeProfileId.value,
     })
   }
 
   function hydrateFromStorage(): void {
     const data = loadPersistedState()
-    if (!data) return
+    if (!data) {
+      // First launch — seed a default profile from defaults
+      profiles.value = [createDefaultProfile()]
+      activeProfileId.value = profiles.value[0]?.id ?? null
+      return
+    }
 
     if (data.settings) {
       settings.value = data.settings
@@ -190,6 +347,25 @@ export function usePomodoro() {
       data.sessionNotes ?? [],
       settings.value.sessionsBeforeLongBreak,
     )
+
+    if (data.profiles && data.profiles.length > 0) {
+      profiles.value = data.profiles
+    } else {
+      profiles.value = sanitizeProfiles(
+        null,
+        settings.value,
+        sessionNotes.value,
+      )
+    }
+
+    if (
+      typeof data.activeProfileId === 'string' &&
+      profiles.value.some((p) => p.id === data.activeProfileId)
+    ) {
+      activeProfileId.value = data.activeProfileId
+    } else {
+      activeProfileId.value = profiles.value[0]?.id ?? null
+    }
 
     // Resume a timer that was running when the page was closed/minimized
     const savedEnd =
@@ -225,6 +401,9 @@ export function usePomodoro() {
     } else {
       remainingSeconds.value = durationForMode(mode.value)
     }
+
+    // If we hydrated onto a 0-minute break, skip it immediately
+    skipZeroDurationBreakIfNeeded()
   }
 
   /** Keep notes array length aligned with sessions-before-long-break */
@@ -237,10 +416,20 @@ export function usePomodoro() {
       notes,
       settings.value.sessionsBeforeLongBreak,
     )
+    // Keep active profile's notes in sync when user saves breakdown
+    syncActiveProfileFromCurrent()
   }
 
   watch(
-    [settings, mode, completedInCycle, remainingSeconds, sessionNotes],
+    [
+      settings,
+      mode,
+      completedInCycle,
+      remainingSeconds,
+      sessionNotes,
+      profiles,
+      activeProfileId,
+    ],
     () => persist(),
     { deep: true },
   )
@@ -355,9 +544,20 @@ export function usePomodoro() {
     // Must run play() in this user-gesture stack for browsers to allow audio
     unlockAudio()
 
+    // Don't start a 0-duration break — advance instead
+    if (mode.value !== 'work' && durationForMode(mode.value) <= 0) {
+      advanceAfterSession()
+      return
+    }
+
     if (remainingSeconds.value <= 0) {
       remainingSeconds.value = durationForMode(mode.value)
     }
+    if (remainingSeconds.value <= 0) {
+      advanceAfterSession()
+      return
+    }
+
     isRunning.value = true
     startEngine(true)
     // Explicit call keeps tick start on the same click call stack
@@ -367,8 +567,22 @@ export function usePomodoro() {
   }
 
   /**
+   * If current mode is a break with 0 minutes, skip forward to the next
+   * meaningful phase (work). Used after duration edits and hydrate.
+   */
+  function skipZeroDurationBreakIfNeeded(): void {
+    // Guard against infinite loops (shouldn't happen with valid settings)
+    let guard = 0
+    while (mode.value !== 'work' && durationForMode(mode.value) <= 0 && guard < 4) {
+      advanceAfterSession()
+      guard += 1
+    }
+  }
+
+  /**
    * Advance cycle when countdown hits 0.
-   * Work complete → fill a progress dot, then short or long break.
+   * Work complete → fill a progress dot, then short or long break
+   *   (or skip the break entirely when duration is 0).
    * Long break complete → reset dots and start work.
    */
   function advanceAfterSession(): void {
@@ -377,7 +591,16 @@ export function usePomodoro() {
       completedInCycle.value = nextCompleted
 
       if (nextCompleted >= settings.value.sessionsBeforeLongBreak) {
-        mode.value = 'longBreak'
+        if (settings.value.longBreakMinutes <= 0) {
+          // No long break — start a fresh cycle on work
+          completedInCycle.value = 0
+          mode.value = 'work'
+        } else {
+          mode.value = 'longBreak'
+        }
+      } else if (settings.value.shortBreakMinutes <= 0) {
+        // No short break — go straight to next work session
+        mode.value = 'work'
       } else {
         mode.value = 'shortBreak'
       }
@@ -389,6 +612,11 @@ export function usePomodoro() {
     }
 
     remainingSeconds.value = durationForMode(mode.value)
+
+    // Chain-skip if we landed on another zero-duration break
+    if (mode.value !== 'work' && remainingSeconds.value <= 0) {
+      advanceAfterSession()
+    }
   }
 
   function onTimerComplete(): void {
@@ -465,6 +693,49 @@ export function usePomodoro() {
     }
   }
 
+  /**
+   * Quick-edit work session count from the settings dropdown.
+   * Clamps to 1–12, resizes notes, and resets the cycle timer.
+   */
+  function setSessionsBeforeLongBreak(raw: number | string): void {
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return
+    const count = Math.min(
+      SESSIONS_RANGE.max,
+      Math.max(SESSIONS_RANGE.min, Math.round(n)),
+    )
+    if (count === settings.value.sessionsBeforeLongBreak) return
+
+    const wasRunning = isRunning.value
+    stopTicking()
+    isRunning.value = false
+
+    settings.value = {
+      ...settings.value,
+      sessionsBeforeLongBreak: count,
+    }
+
+    if (completedInCycle.value > count) {
+      completedInCycle.value = count
+    }
+
+    resizeSessionNotes(count)
+
+    // If we were mid-cycle past the new length, land on work fresh
+    if (completedInCycle.value >= count && mode.value === 'work') {
+      // stay; user finished the cycle's work
+    }
+
+    remainingSeconds.value = durationForMode(mode.value)
+    skipZeroDurationBreakIfNeeded()
+    syncActiveProfileFromCurrent()
+
+    if (wasRunning && remainingSeconds.value > 0) {
+      isRunning.value = true
+      startEngine(true)
+    }
+  }
+
   function openDurationsModal(): void {
     menuOpen.value = false
     draft.value = {
@@ -488,11 +759,28 @@ export function usePomodoro() {
     const lb = Number(draft.value.longBreakMinutes)
     const n = Number(draft.value.sessionsBeforeLongBreak)
 
-    if (![w, sb, lb, n].every((x) => Number.isFinite(x) && x > 0)) {
-      durationsError.value = 'All values must be positive numbers.'
+    if (!Number.isFinite(w) || w < WORK_MINUTES_RANGE.min) {
+      durationsError.value = `Work must be at least ${WORK_MINUTES_RANGE.min} minute.`
       return
     }
-    if (w > 180 || sb > 60 || lb > 90 || n > 12) {
+    if (!Number.isFinite(sb) || sb < SHORT_BREAK_RANGE.min) {
+      durationsError.value = 'Short break must be 0 or more (0 = no break).'
+      return
+    }
+    if (!Number.isFinite(lb) || lb < LONG_BREAK_RANGE.min) {
+      durationsError.value = 'Long break must be 0 or more (0 = no break).'
+      return
+    }
+    if (!Number.isFinite(n) || n < SESSIONS_RANGE.min) {
+      durationsError.value = `Sessions must be at least ${SESSIONS_RANGE.min}.`
+      return
+    }
+    if (
+      w > WORK_MINUTES_RANGE.max ||
+      sb > SHORT_BREAK_RANGE.max ||
+      lb > LONG_BREAK_RANGE.max ||
+      n > SESSIONS_RANGE.max
+    ) {
       durationsError.value = 'One or more values are out of range.'
       return
     }
@@ -515,9 +803,11 @@ export function usePomodoro() {
 
     resizeSessionNotes(settings.value.sessionsBeforeLongBreak)
     remainingSeconds.value = durationForMode(mode.value)
+    skipZeroDurationBreakIfNeeded()
+    syncActiveProfileFromCurrent()
     closeDurationsModal()
 
-    if (wasRunning) {
+    if (wasRunning && remainingSeconds.value > 0) {
       isRunning.value = true
       startEngine(true)
     }
@@ -551,6 +841,201 @@ export function usePomodoro() {
     if (isValidHex(v)) setBackground(v)
   }
 
+  // ----- Profiles -----
+
+  /** Snapshot current durations + notes into the active profile (if any) */
+  function syncActiveProfileFromCurrent(): void {
+    const id = activeProfileId.value
+    if (!id) return
+    const idx = profiles.value.findIndex((p) => p.id === id)
+    if (idx === -1) return
+
+    const updated: PomodoroProfile = {
+      ...profiles.value[idx]!,
+      workMinutes: settings.value.workMinutes,
+      shortBreakMinutes: settings.value.shortBreakMinutes,
+      longBreakMinutes: settings.value.longBreakMinutes,
+      sessionsBeforeLongBreak: settings.value.sessionsBeforeLongBreak,
+      sessionNotes: normalizeSessionNotes(
+        sessionNotes.value,
+        settings.value.sessionsBeforeLongBreak,
+      ),
+    }
+
+    const next = [...profiles.value]
+    next[idx] = updated
+    profiles.value = next
+  }
+
+  function openProfilesModal(): void {
+    menuOpen.value = false
+    profilesError.value = ''
+    newProfileName.value = ''
+    showProfilesModal.value = true
+  }
+
+  function closeProfilesModal(): void {
+    showProfilesModal.value = false
+    profilesError.value = ''
+    newProfileName.value = ''
+  }
+
+  /**
+   * Apply a profile's durations + notes and reset the cycle to work.
+   * Sound/background prefs are left unchanged.
+   */
+  function applyProfile(profile: PomodoroProfile): void {
+    stopTicking()
+    isRunning.value = false
+
+    settings.value = {
+      ...settings.value,
+      workMinutes: profile.workMinutes,
+      shortBreakMinutes: profile.shortBreakMinutes,
+      longBreakMinutes: profile.longBreakMinutes,
+      sessionsBeforeLongBreak: profile.sessionsBeforeLongBreak,
+    }
+
+    sessionNotes.value = normalizeSessionNotes(
+      profile.sessionNotes,
+      profile.sessionsBeforeLongBreak,
+    )
+
+    mode.value = 'work'
+    completedInCycle.value = 0
+    remainingSeconds.value = durationForMode('work')
+    activeProfileId.value = profile.id
+  }
+
+  function switchProfile(id: string): void {
+    const profile = profiles.value.find((p) => p.id === id)
+    if (!profile) {
+      profilesError.value = 'Profile not found.'
+      return
+    }
+    if (id === activeProfileId.value) {
+      // Still re-apply so user can "reload" the saved snapshot
+      applyProfile(profile)
+      profilesError.value = ''
+      return
+    }
+
+    // Save current config into the outgoing profile first
+    syncActiveProfileFromCurrent()
+    applyProfile(profile)
+    profilesError.value = ''
+  }
+
+  /**
+   * Save current durations + notes as a new named profile and select it.
+   */
+  function createProfileFromCurrent(name?: string): void {
+    const trimmed = (name ?? newProfileName.value).trim()
+    if (!trimmed) {
+      profilesError.value = 'Enter a name for the new profile.'
+      return
+    }
+    if (trimmed.length > 40) {
+      profilesError.value = 'Name must be 40 characters or fewer.'
+      return
+    }
+    if (
+      profiles.value.some(
+        (p) => p.name.toLowerCase() === trimmed.toLowerCase(),
+      )
+    ) {
+      profilesError.value = 'A profile with that name already exists.'
+      return
+    }
+
+    // Persist outgoing active profile first
+    syncActiveProfileFromCurrent()
+
+    const profile: PomodoroProfile = {
+      id: createProfileId(),
+      name: trimmed,
+      workMinutes: settings.value.workMinutes,
+      shortBreakMinutes: settings.value.shortBreakMinutes,
+      longBreakMinutes: settings.value.longBreakMinutes,
+      sessionsBeforeLongBreak: settings.value.sessionsBeforeLongBreak,
+      sessionNotes: normalizeSessionNotes(
+        sessionNotes.value,
+        settings.value.sessionsBeforeLongBreak,
+      ),
+    }
+
+    profiles.value = [...profiles.value, profile]
+    activeProfileId.value = profile.id
+    newProfileName.value = ''
+    profilesError.value = ''
+  }
+
+  /**
+   * Overwrite the active profile with the current live config
+   * (durations + session notes). Useful after tweaking without switching.
+   */
+  function saveCurrentToActiveProfile(): void {
+    if (!activeProfileId.value) {
+      profilesError.value = 'No active profile to update.'
+      return
+    }
+    syncActiveProfileFromCurrent()
+    profilesError.value = ''
+  }
+
+  function renameProfile(id: string, name: string): void {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      profilesError.value = 'Name cannot be empty.'
+      return
+    }
+    if (trimmed.length > 40) {
+      profilesError.value = 'Name must be 40 characters or fewer.'
+      return
+    }
+    if (
+      profiles.value.some(
+        (p) => p.id !== id && p.name.toLowerCase() === trimmed.toLowerCase(),
+      )
+    ) {
+      profilesError.value = 'A profile with that name already exists.'
+      return
+    }
+
+    const idx = profiles.value.findIndex((p) => p.id === id)
+    if (idx === -1) {
+      profilesError.value = 'Profile not found.'
+      return
+    }
+
+    const next = [...profiles.value]
+    next[idx] = { ...next[idx]!, name: trimmed }
+    profiles.value = next
+    profilesError.value = ''
+  }
+
+  function deleteProfile(id: string): void {
+    if (profiles.value.length <= 1) {
+      profilesError.value = 'Keep at least one profile.'
+      return
+    }
+
+    const next = profiles.value.filter((p) => p.id !== id)
+    if (next.length === profiles.value.length) {
+      profilesError.value = 'Profile not found.'
+      return
+    }
+
+    profiles.value = next
+
+    if (activeProfileId.value === id) {
+      const fallback = next[0]!
+      applyProfile(fallback)
+    }
+
+    profilesError.value = ''
+  }
+
   // ----- Document title + keyboard -----
 
   watch([displayTime, isRunning, modeLabel], () => {
@@ -570,12 +1055,19 @@ export function usePomodoro() {
     ) {
       return
     }
-    if (showDurationsModal.value || showBackgroundModal.value) return
+    if (
+      showDurationsModal.value ||
+      showBackgroundModal.value ||
+      showProfilesModal.value
+    ) {
+      return
+    }
     e.preventDefault()
     toggleRunning()
   }
 
   function onVisibilityChange(): void {
+    nowMs.value = Date.now()
     // Always re-sync from wall-clock end time when returning (or while hidden)
     if (isRunning.value && endTimestamp !== null) {
       syncFromEndTimestamp()
@@ -586,12 +1078,14 @@ export function usePomodoro() {
   }
 
   function onPageShow(): void {
+    nowMs.value = Date.now()
     if (isRunning.value && endTimestamp !== null) {
       syncFromEndTimestamp()
     }
   }
 
   function onWindowFocus(): void {
+    nowMs.value = Date.now()
     if (isRunning.value && endTimestamp !== null) {
       syncFromEndTimestamp()
     }
@@ -601,7 +1095,10 @@ export function usePomodoro() {
     hydrateFromStorage()
     if (!isRunning.value && remainingSeconds.value <= 0) {
       remainingSeconds.value = durationForMode(mode.value)
+      skipZeroDurationBreakIfNeeded()
     }
+    nowMs.value = Date.now()
+    startNowTick()
     document.addEventListener('keydown', onKeydown)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('pageshow', onPageShow)
@@ -612,6 +1109,7 @@ export function usePomodoro() {
     // Snapshot running state before tearing down so a refresh can resume
     if (isRunning.value) persist()
     clearTick()
+    stopNowTick()
     try {
       timerWorker?.terminate()
     } catch {
@@ -628,6 +1126,7 @@ export function usePomodoro() {
   return {
     DEFAULT_BG,
     BACKGROUND_PRESETS,
+    MAX_SESSIONS,
     settings,
     mode,
     completedInCycle,
@@ -635,11 +1134,18 @@ export function usePomodoro() {
     isRunning,
     sessionNotes,
     activeSessionIndex,
+    sessionBreakdown,
+    profiles,
+    activeProfileId,
+    activeProfile,
     menuOpen,
     showDurationsModal,
     showBackgroundModal,
+    showProfilesModal,
     durationsError,
+    profilesError,
     draft,
+    newProfileName,
     isBreak,
     modeLabel,
     modeBadgeClass,
@@ -653,6 +1159,7 @@ export function usePomodoro() {
     toggleTickingDuringBreaks,
     toggleGoingOffSound,
     toggleCompletionSound,
+    setSessionsBeforeLongBreak,
     openDurationsModal,
     closeDurationsModal,
     saveDurations,
@@ -661,6 +1168,13 @@ export function usePomodoro() {
     setBackground,
     onBackgroundLive,
     onBackgroundHex,
+    openProfilesModal,
+    closeProfilesModal,
+    switchProfile,
+    createProfileFromCurrent,
+    saveCurrentToActiveProfile,
+    renameProfile,
+    deleteProfile,
     saveSessionNotes,
   }
 }

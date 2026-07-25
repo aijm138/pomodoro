@@ -8,7 +8,10 @@ defineProps<{
   tickingDuringBreaks: boolean
   goingOffSoundEnabled: boolean
   completionSoundEnabled: boolean
+  sessionsBeforeLongBreak: number
   backgroundColor: string
+  /** Optional label shown under the title when a profile is active */
+  activeProfileName?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -18,8 +21,10 @@ const emit = defineEmits<{
   'toggle-ticking-breaks': []
   'toggle-going-off': []
   'toggle-completion': []
+  'update-sessions': [count: number]
   'open-durations': []
   'open-background': []
+  'open-profiles': []
 }>()
 </script>
 
@@ -36,11 +41,16 @@ const emit = defineEmits<{
           🍅
         </span>
         <div class="min-w-0">
-          <p class="truncate text-sm font-semibold tracking-tight text-white sm:text-base">
+          <p
+            class="truncate text-sm font-semibold tracking-tight text-white sm:text-base"
+          >
             Pomodoro Timer
           </p>
           <p class="hidden truncate text-xs text-white/45 sm:block">
-            Focus · Break · Repeat
+            <template v-if="activeProfileName">
+              {{ activeProfileName }}
+            </template>
+            <template v-else> Focus · Break · Repeat </template>
           </p>
         </div>
       </div>
@@ -52,14 +62,17 @@ const emit = defineEmits<{
         :ticking-during-breaks="tickingDuringBreaks"
         :going-off-sound-enabled="goingOffSoundEnabled"
         :completion-sound-enabled="completionSoundEnabled"
+        :sessions-before-long-break="sessionsBeforeLongBreak"
         @update:open="emit('update:menuOpen', $event)"
         @toggle-skip="emit('toggle-skip')"
         @toggle-ticking="emit('toggle-ticking')"
         @toggle-ticking-breaks="emit('toggle-ticking-breaks')"
         @toggle-going-off="emit('toggle-going-off')"
         @toggle-completion="emit('toggle-completion')"
+        @update-sessions="emit('update-sessions', $event)"
         @open-durations="emit('open-durations')"
         @open-background="emit('open-background')"
+        @open-profiles="emit('open-profiles')"
       />
     </div>
   </header>

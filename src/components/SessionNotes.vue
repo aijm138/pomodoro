@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import type { WorkSessionProjection } from '@/types/pomodoro'
 
 const props = defineProps<{
   /** One note per work session in the cycle */
   notes: string[]
   /** Currently active work session index (0-based), or -1 if on a break */
   activeSessionIndex: number
+  /**
+   * Projected end times for each work session (back-to-back assumption).
+   * Length always matches notes / sessionsBeforeLongBreak.
+   */
+  sessionBreakdown?: WorkSessionProjection[]
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +29,19 @@ const justSaved = ref(false)
 let savedTimer: number | null = null
 
 const sessionCount = computed(() => props.notes.length)
+
+/** Lookup map: index → projection (safe when prop is missing / shorter) */
+const breakdownByIndex = computed(() => {
+  const map = new Map<number, WorkSessionProjection>()
+  for (const item of props.sessionBreakdown ?? []) {
+    map.set(item.index, item)
+  }
+  return map
+})
+
+function projectionFor(index: number): WorkSessionProjection | undefined {
+  return breakdownByIndex.value.get(index)
+}
 
 watch(
   () => props.notes,
@@ -128,14 +147,15 @@ function isActive(index: number): boolean {
 <template>
   <section
     class="w-full max-w-md rounded-3xl border border-white/10 bg-black/45 px-5 py-6 shadow-2xl backdrop-blur-md sm:px-8 sm:py-7"
-    aria-label="Session notes"
+    aria-label="Session breakdown"
   >
     <header class="mb-5">
       <h2 class="text-base font-semibold tracking-tight text-white/95 sm:text-lg">
-        Session notes
+        Session Breakdown
       </h2>
       <p class="mt-1 text-xs leading-relaxed text-white/45 sm:text-sm">
-        Plan what you’ll focus on for each work session. Press
+        Plan each focus block and see when it ends if you run work and breaks
+        back-to-back. Press
         <span class="text-white/60">Edit</span> to change notes, then
         <span class="text-white/60">Save</span> when you’re done.
       </p>
@@ -155,10 +175,10 @@ function isActive(index: number): boolean {
         <div class="mb-2 flex items-center justify-between gap-2">
           <label
             :for="`session-note-${index}`"
-            class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/70"
+            class="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/70"
           >
             <span
-              class="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+              class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
               :class="
                 isActive(index)
                   ? 'bg-tomato-500 text-white'
@@ -168,23 +188,50 @@ function isActive(index: number): boolean {
             >
               {{ index + 1 }}
             </span>
-            Work session {{ index + 1 }}
+            <span class="truncate">Work session {{ index + 1 }}</span>
             <span
               v-if="isActive(index)"
-              class="rounded-full bg-tomato-500/30 px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-tomato-200"
+              class="shrink-0 rounded-full bg-tomato-500/30 px-1.5 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-tomato-200"
             >
               current
             </span>
           </label>
 
-          <button
-            type="button"
-            class="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-white/70 transition-colors hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-            :aria-label="`Delete session ${index + 1} note`"
-            @click="clearNote(index)"
-          >
-            Delete
-          </button>
+          <div class="flex shrink-0 items-center gap-2">
+            <!-- Projected end time (or "done") -->
+            <span
+              v-if="projectionFor(index)"
+              class="text-right text-[11px] font-medium normal-case tracking-normal sm:text-xs"
+              :class="
+                projectionFor(index)?.isDone
+                  ? 'text-white/35'
+                  : projectionFor(index)?.isCurrent
+                    ? 'text-tomato-200'
+                    : 'text-white/55'
+              "
+              :title="
+                projectionFor(index)?.isDone
+                  ? `Work session ${index + 1} completed`
+                  : `Projected end if sessions run back-to-back`
+              "
+              :aria-label="
+                projectionFor(index)?.isDone
+                  ? `Work session ${index + 1} done`
+                  : `Work session ${index + 1} ${projectionFor(index)?.display ?? ''}`
+              "
+            >
+              {{ projectionFor(index)?.display }}
+            </span>
+
+            <button
+              type="button"
+              class="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-white/70 transition-colors hover:border-red-400/40 hover:bg-red-500/15 hover:text-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+              :aria-label="`Delete session ${index + 1} note`"
+              @click="clearNote(index)"
+            >
+              Delete
+            </button>
+          </div>
         </div>
 
         <textarea

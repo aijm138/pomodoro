@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { MAX_SESSIONS, SESSIONS_RANGE } from '@/constants/pomodoro'
 
 const props = defineProps<{
   open: boolean
@@ -8,6 +9,7 @@ const props = defineProps<{
   tickingDuringBreaks: boolean
   goingOffSoundEnabled: boolean
   completionSoundEnabled: boolean
+  sessionsBeforeLongBreak: number
 }>()
 
 const emit = defineEmits<{
@@ -17,12 +19,24 @@ const emit = defineEmits<{
   'toggle-ticking-breaks': []
   'toggle-going-off': []
   'toggle-completion': []
+  'update-sessions': [count: number]
   'open-durations': []
   'open-background': []
+  'open-profiles': []
 }>()
 
 const triggerRef = ref<HTMLButtonElement | null>(null)
 const menuRef = ref<HTMLDivElement | null>(null)
+
+/** Local draft so typing doesn't spam parent until blur/enter */
+const sessionsDraft = ref(String(props.sessionsBeforeLongBreak))
+
+watch(
+  () => props.sessionsBeforeLongBreak,
+  (n) => {
+    sessionsDraft.value = String(n)
+  },
+)
 
 /** Fixed position for teleported menu (avoids stacking-context bugs) */
 const menuStyle = ref<Record<string, string>>({
@@ -72,12 +86,40 @@ function onToggleCompletion(): void {
   emit('toggle-completion')
 }
 
+function commitSessions(): void {
+  const n = Number(sessionsDraft.value)
+  if (!Number.isFinite(n)) {
+    sessionsDraft.value = String(props.sessionsBeforeLongBreak)
+    return
+  }
+  const clamped = Math.min(
+    SESSIONS_RANGE.max,
+    Math.max(SESSIONS_RANGE.min, Math.round(n)),
+  )
+  sessionsDraft.value = String(clamped)
+  if (clamped !== props.sessionsBeforeLongBreak) {
+    emit('update-sessions', clamped)
+  }
+}
+
+function onSessionsKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    commitSessions()
+    ;(event.target as HTMLInputElement | null)?.blur()
+  }
+}
+
 function onOpenDurations(): void {
   emit('open-durations')
 }
 
 function onOpenBackground(): void {
   emit('open-background')
+}
+
+function onOpenProfiles(): void {
+  emit('open-profiles')
 }
 
 /** Close when clicking outside trigger + menu */
@@ -106,6 +148,7 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
+      sessionsDraft.value = String(props.sessionsBeforeLongBreak)
       updateMenuPosition()
       await nextTick()
       updateMenuPosition()
@@ -299,6 +342,39 @@ onUnmounted(() => {
 
         <div class="h-px bg-white/10" />
 
+        <!-- Work sessions count (quick edit) -->
+        <div
+          role="none"
+          class="flex items-center justify-between gap-3 px-4 py-3"
+          @click.stop
+          @pointerdown.stop
+        >
+          <label
+            for="menu-sessions-n"
+            class="min-w-0 flex-1 text-sm leading-snug text-white/90"
+          >
+            Work sessions
+            <span class="mt-0.5 block text-[11px] font-normal text-white/40">
+              Before long break (1–{{ MAX_SESSIONS }})
+            </span>
+          </label>
+          <input
+            id="menu-sessions-n"
+            v-model="sessionsDraft"
+            type="number"
+            :min="SESSIONS_RANGE.min"
+            :max="SESSIONS_RANGE.max"
+            inputmode="numeric"
+            class="h-9 w-16 shrink-0 rounded-lg border border-white/15 bg-white/10 px-2 text-center text-sm font-semibold text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-tomato-400"
+            aria-label="Number of work sessions before long break"
+            @blur="commitSessions"
+            @keydown="onSessionsKeydown"
+            @click.stop
+          />
+        </div>
+
+        <div class="h-px bg-white/10" />
+
         <button
           type="button"
           role="menuitem"
@@ -315,6 +391,15 @@ onUnmounted(() => {
           @click="onOpenBackground"
         >
           Customize background…
+        </button>
+
+        <button
+          type="button"
+          role="menuitem"
+          class="w-full px-4 py-3.5 text-left text-sm text-white/90 transition-colors hover:bg-white/5"
+          @click="onOpenProfiles"
+        >
+          Profiles…
         </button>
       </div>
     </Teleport>

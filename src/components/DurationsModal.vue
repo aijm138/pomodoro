@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import type { DurationDraft } from '@/types/pomodoro'
+import {
+  LONG_BREAK_RANGE,
+  SESSIONS_RANGE,
+  SHORT_BREAK_RANGE,
+  WORK_MINUTES_RANGE,
+} from '@/constants/pomodoro'
 
 const props = defineProps<{
   open: boolean
@@ -77,8 +83,8 @@ function updateField<K extends keyof DurationDraft>(
             id="work-min"
             :value="draft.workMinutes"
             type="number"
-            min="1"
-            max="180"
+            :min="WORK_MINUTES_RANGE.min"
+            :max="WORK_MINUTES_RANGE.max"
             required
             class="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-tomato-400"
             @input="
@@ -101,8 +107,8 @@ function updateField<K extends keyof DurationDraft>(
             id="short-min"
             :value="draft.shortBreakMinutes"
             type="number"
-            min="1"
-            max="60"
+            :min="SHORT_BREAK_RANGE.min"
+            :max="SHORT_BREAK_RANGE.max"
             required
             class="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-tomato-400"
             @input="
@@ -112,6 +118,9 @@ function updateField<K extends keyof DurationDraft>(
               )
             "
           />
+          <p class="mt-1.5 text-xs text-white/40">
+            Set to 0 to skip short breaks (work sessions run back-to-back).
+          </p>
         </div>
 
         <div>
@@ -125,8 +134,8 @@ function updateField<K extends keyof DurationDraft>(
             id="long-min"
             :value="draft.longBreakMinutes"
             type="number"
-            min="1"
-            max="90"
+            :min="LONG_BREAK_RANGE.min"
+            :max="LONG_BREAK_RANGE.max"
             required
             class="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-tomato-400"
             @input="
@@ -136,6 +145,9 @@ function updateField<K extends keyof DurationDraft>(
               )
             "
           />
+          <p class="mt-1.5 text-xs text-white/40">
+            Set to 0 to skip the long break and start a new cycle immediately.
+          </p>
         </div>
 
         <div>
@@ -149,8 +161,8 @@ function updateField<K extends keyof DurationDraft>(
             id="sessions-n"
             :value="draft.sessionsBeforeLongBreak"
             type="number"
-            min="1"
-            max="12"
+            :min="SESSIONS_RANGE.min"
+            :max="SESSIONS_RANGE.max"
             required
             class="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white focus:border-transparent focus:outline-none focus:ring-2 focus:ring-tomato-400"
             @input="
@@ -161,7 +173,8 @@ function updateField<K extends keyof DurationDraft>(
             "
           />
           <p class="mt-1.5 text-xs text-white/40">
-            Progress dots (1–12). Default is 4.
+            Progress dots ({{ SESSIONS_RANGE.min }}–{{ SESSIONS_RANGE.max }}).
+            Default is 4.
           </p>
         </div>
 

@@ -5,3 +5,14 @@ export function formatTime(totalSeconds: number): string {
   const s = total % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
+
+/**
+ * Format a wall-clock Date as a short locale time string
+ * (e.g. "3:42 PM" or "15:42" depending on the user's locale).
+ */
+export function formatClockTime(date: Date): string {
+  return date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}

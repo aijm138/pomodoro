@@ -5,6 +5,7 @@ import TimerCard from '@/components/TimerCard.vue'
 import SessionNotes from '@/components/SessionNotes.vue'
 import DurationsModal from '@/components/DurationsModal.vue'
 import BackgroundModal from '@/components/BackgroundModal.vue'
+import ProfilesModal from '@/components/ProfilesModal.vue'
 import { usePomodoro } from '@/composables/usePomodoro'
 import { useCompactViewport } from '@/composables/useCompactViewport'
 import type { DurationDraft } from '@/types/pomodoro'
@@ -18,11 +19,18 @@ const {
   isRunning,
   sessionNotes,
   activeSessionIndex,
+  sessionBreakdown,
+  profiles,
+  activeProfileId,
+  activeProfile,
   menuOpen,
   showDurationsModal,
   showBackgroundModal,
+  showProfilesModal,
   durationsError,
+  profilesError,
   draft,
+  newProfileName,
   isBreak,
   modeLabel,
   modeBadgeClass,
@@ -36,6 +44,7 @@ const {
   toggleTickingDuringBreaks,
   toggleGoingOffSound,
   toggleCompletionSound,
+  setSessionsBeforeLongBreak,
   openDurationsModal,
   closeDurationsModal,
   saveDurations,
@@ -44,6 +53,13 @@ const {
   setBackground,
   onBackgroundLive,
   onBackgroundHex,
+  openProfilesModal,
+  closeProfilesModal,
+  switchProfile,
+  createProfileFromCurrent,
+  saveCurrentToActiveProfile,
+  renameProfile,
+  deleteProfile,
   saveSessionNotes,
 } = usePomodoro()
 
@@ -84,6 +100,19 @@ const currentSessionNote = computed(() => {
   return ''
 })
 
+const footerHint = computed(() => {
+  const n = settings.value.sessionsBeforeLongBreak
+  const short = settings.value.shortBreakMinutes
+  const long = settings.value.longBreakMinutes
+
+  const shortPart =
+    short <= 0 ? 'no short breaks' : `${short}-min short breaks`
+  const longPart =
+    long <= 0 ? 'no long break' : `${long}-min long break after ${n} sessions`
+
+  return `Work → ${shortPart} → … → ${longPart}. Profiles, settings, and notes are saved on this device.`
+})
+
 function onDraftUpdate(value: DurationDraft): void {
   draft.value = value
 }
@@ -97,6 +126,7 @@ function enterFocusMode(): void {
   menuOpen.value = false
   showDurationsModal.value = false
   showBackgroundModal.value = false
+  showProfilesModal.value = false
   isFocusMode.value = true
 }
 
@@ -141,15 +171,19 @@ onUnmounted(() => {
       :ticking-during-breaks="settings.tickingDuringBreaks"
       :going-off-sound-enabled="settings.goingOffSoundEnabled"
       :completion-sound-enabled="settings.completionSoundEnabled"
+      :sessions-before-long-break="settings.sessionsBeforeLongBreak"
       :background-color="settings.backgroundColor"
+      :active-profile-name="activeProfile?.name ?? null"
       @update:menu-open="menuOpen = $event"
       @toggle-skip="toggleAllowSkipWork"
       @toggle-ticking="toggleTickingSound"
       @toggle-ticking-breaks="toggleTickingDuringBreaks"
       @toggle-going-off="toggleGoingOffSound"
       @toggle-completion="toggleCompletionSound"
+      @update-sessions="setSessionsBeforeLongBreak"
       @open-durations="openDurationsModal"
       @open-background="openBackgroundModal"
+      @open-profiles="openProfilesModal"
     />
 
     <main
@@ -188,13 +222,12 @@ onUnmounted(() => {
           <SessionNotes
             :notes="sessionNotes"
             :active-session-index="activeSessionIndex"
+            :session-breakdown="sessionBreakdown"
             @save="saveSessionNotes"
           />
 
           <p class="px-2 pb-4 text-center text-xs text-white/35 sm:text-sm">
-            Work → short break → … → long break after
-            {{ settings.sessionsBeforeLongBreak }} sessions. Settings and notes
-            are saved on this device.
+            {{ footerHint }}
           </p>
         </template>
       </div>
@@ -221,6 +254,22 @@ onUnmounted(() => {
       @live-color="onBackgroundLive"
       @hex-input="onBackgroundHex"
       @reset-default="resetBackgroundAndClose"
+    />
+
+    <ProfilesModal
+      v-if="!useMinimalLayout"
+      :open="showProfilesModal"
+      :profiles="profiles"
+      :active-profile-id="activeProfileId"
+      :new-profile-name="newProfileName"
+      :error="profilesError"
+      @close="closeProfilesModal"
+      @update:new-profile-name="newProfileName = $event"
+      @switch="switchProfile"
+      @create="createProfileFromCurrent"
+      @save-current="saveCurrentToActiveProfile"
+      @rename="renameProfile"
+      @delete="deleteProfile"
     />
   </div>
 </template>
