@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { PomodoroProfile } from '@/types/pomodoro'
 
 const props = defineProps<{
@@ -70,6 +70,21 @@ function onNewNameInput(event: Event): void {
   const target = event.target as HTMLInputElement
   emit('update:newProfileName', target.value)
 }
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && props.open) {
+    e.preventDefault()
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
