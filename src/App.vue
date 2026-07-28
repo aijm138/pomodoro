@@ -211,11 +211,15 @@ onUnmounted(() => {
           :compact="useMinimalLayout"
           :is-focus-mode="isFocusMode"
           :session-note="currentSessionNote"
+          :ticking-sound-enabled="settings.tickingSoundEnabled"
+          :active-profile-name="activeProfile?.name ?? null"
           @toggle="toggleRunning"
           @skip="skipSession"
           @reset="resetCycle"
           @enter-focus="enterFocusMode"
           @exit-focus="exitFocusMode"
+          @toggle-ticking="toggleTickingSound"
+          @open-profiles="openProfilesModal"
         />
 
         <template v-if="!useMinimalLayout">

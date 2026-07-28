@@ -20,6 +20,10 @@ const props = defineProps<{
   isFocusMode?: boolean
   /** Note text for the current / relevant work session */
   sessionNote?: string
+  /** Ticking sound is enabled (for in-card toggle) */
+  tickingSoundEnabled?: boolean
+  /** Active profile name shown on the profile button */
+  activeProfileName?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +32,8 @@ const emit = defineEmits<{
   reset: []
   'enter-focus': []
   'exit-focus': []
+  'toggle-ticking': []
+  'open-profiles': []
 }>()
 
 const trimmedNote = computed(() => (props.sessionNote ?? '').trim())
@@ -174,6 +180,74 @@ const showSessionNote = computed(() => trimmedNote.value.length > 0)
         @skip="emit('skip')"
         @reset="emit('reset')"
       />
+    </div>
+
+    <!-- Profile button & Ticking toggle — below controls, non-compact only -->
+    <div v-if="!compact" class="mt-5 border-t border-white/10 pt-4 sm:mt-6 sm:pt-5">
+      <div class="flex items-center justify-between gap-3">
+        <!-- Profile button -->
+        <button
+          type="button"
+          class="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-white/80 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-tomato-400"
+          aria-label="Open profiles"
+          title="Switch or manage profiles"
+          @click="emit('open-profiles')"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4 shrink-0 text-white/60"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="1.75"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
+            />
+          </svg>
+          <span class="truncate">{{ activeProfileName || 'Profiles' }}</span>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="ml-auto h-3.5 w-3.5 shrink-0 text-white/40"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2.5"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M8.25 4.5l7.5 7.5-7.5 7.5"
+            />
+          </svg>
+        </button>
+
+        <!-- Ticking sound toggle -->
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="tickingSoundEnabled"
+          class="flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-white/80 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-tomato-400"
+          aria-label="Toggle ticking sound"
+          @click="emit('toggle-ticking')"
+        >
+          <span class="hidden sm:inline">Ticking</span>
+          <span
+            class="relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors"
+            :class="tickingSoundEnabled ? 'bg-tomato-500' : 'bg-white/20'"
+            aria-hidden="true"
+          >
+            <span
+              class="mt-1 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform"
+              :class="tickingSoundEnabled ? 'translate-x-6' : 'translate-x-1'"
+            />
+          </span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
